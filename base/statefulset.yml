@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rethinkdb
+spec:
+  selector:
+    matchLabels:
+      app: rethinkdb
+      app.kubernetes.io/name: rethinkdb
+  serviceName: rethinkdb
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: rethinkdb
+        app.kubernetes.io/name: rethinkdb
+    spec:
+      containers:
+        - name: rethinkdb
+          image: rethinkdb:2.4.2
+          command:
+            - bash
+            - "-c"
+            - |
+              # Check if primary or replica pod
+              [[ $HOSTNAME =~ -([0-9]+)$ ]] || exit 1
+              ordinal=${BASH_REMATCH[1]}
+              if [[ $ordinal -eq 0 ]]; then
+                rethinkdb create --initial-password $RETHINKDB_PASSWORD
+                rethinkdb --bind all
+              else
+                rethinkdb --initial-password auto --join rethinkdb-0.rethinkdb:29015 --bind all
+              fi
+          env:
+            - name: RETHINKDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rethinkdb-pass
+                  key: password
+          ports:
+            - name: intracluster
+              containerPort: 29015
+            - name: clients
+              containerPort: 28015
+            - name: dashboard
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 2
+            timeoutSeconds: 1
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
